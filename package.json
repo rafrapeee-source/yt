@@ -1,0 +1,23 @@
+{
+  "name": "yt-search-app",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A YouTube-style front end (search, watch, channels, comments, related videos) served through Invidious or Piped instances",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "compression": "^1.8.2",
+    "express": "^5.2.1",
+    "https-proxy-agent": "^9.1.0",
+    "node-fetch": "^2.7.0"
+  }
+}

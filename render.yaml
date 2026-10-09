@@ -1,0 +1,29 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploy: push this repo to GitHub/GitLab, then in Render choose
+# New + > Blueprint and select the repo.
+services:
+  - type: web
+    name: findtube
+    runtime: node
+    region: singapore
+    plan: free
+    buildCommand: npm ci --omit=dev
+    # Cap the JS heap below the free plan's 512 MB so garbage collection
+    # kicks in before the platform kills the process for using too much memory.
+    startCommand: node --max-old-space-size=320 server/index.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Optional overrides (defaults shown in server/config.js):
+      # - key: INVIDIOUS_INSTANCE
+      #   value: https://your-invidious.example
+      # - key: PIPED_INSTANCE
+      #   value: https://your-piped-api.example
+      # - key: IMAGE_CACHE_MB
+      #   value: "40"
+      # - key: RATE_LIMIT_API
+      #   value: "180"

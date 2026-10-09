@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark light" />
+<title>Findtube</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 20'%3E%3Crect width='28' height='20' rx='6' fill='%23ff0033'/%3E%3Cpath d='M11 6l7 4-7 4z' fill='white'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/styles.css" />
+<!-- No bundler: preload the whole module graph in parallel instead of
+     discovering it one import level (one network round trip) at a time. -->
+<link rel="modulepreload" href="/js/util.js" />
+<link rel="modulepreload" href="/js/icons.js" />
+<link rel="modulepreload" href="/js/store.js" />
+<link rel="modulepreload" href="/js/api.js" />
+<link rel="modulepreload" href="/js/components.js" />
+<link rel="modulepreload" href="/js/views/home.js" />
+<link rel="modulepreload" href="/js/views/results.js" />
+<link rel="modulepreload" href="/js/views/watch.js" />
+<link rel="modulepreload" href="/js/views/channel.js" />
+<link rel="modulepreload" href="/js/views/library.js" />
+<link rel="modulepreload" href="/js/views/notfound.js" />
+<script type="module" src="/js/main.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead-start">
+      <button type="button" class="icon-btn" id="guide-btn" aria-label="Menu" data-icon="menu"></button>
+      <a href="/" class="logo" aria-label="Findtube home">
+        <svg viewBox="0 0 28 20" aria-hidden="true"><rect width="28" height="20" rx="6" fill="#ff0033"/><path d="M11 6l7 4-7 4z" fill="#fff"/></svg>
+        <span>Findtube</span>
+      </a>
+    </div>
+
+    <form class="search" id="search-form" role="search" autocomplete="off">
+      <div class="search-box">
+        <input type="search" id="search-input" name="search_query" placeholder="Search" aria-label="Search"
+               aria-autocomplete="list" aria-controls="suggestions" spellcheck="false" />
+        <ul class="suggestions" id="suggestions" role="listbox" hidden></ul>
+      </div>
+      <button type="submit" class="search-btn" aria-label="Search" data-icon="search"></button>
+    </form>
+
+    <div class="masthead-end">
+      <button type="button" class="icon-btn mobile-search-btn" id="mobile-search-btn" aria-label="Search" data-icon="search"></button>
+      <button type="button" class="instance-pill" id="instance-pill" title="Instance settings">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="instance-pill-name" id="instance-pill-name"></span>
+      </button>
+      <button type="button" class="icon-btn" id="settings-btn" aria-label="Settings" data-icon="settings"></button>
+    </div>
+  </header>
+
+  <div class="scrim" id="scrim" hidden></div>
+  <nav class="guide" id="guide" aria-label="Main">
+    <div class="guide-section">
+      <a href="/" class="guide-item" data-route="home"><span data-icon="home"></span><span>Home</span></a>
+      <a href="/feed/subscriptions" class="guide-item" data-route="subscriptions"><span data-icon="subscriptions"></span><span>Subscriptions</span></a>
+      <a href="/feed/history" class="guide-item" data-route="history"><span data-icon="history"></span><span>History</span></a>
+    </div>
+    <div class="guide-section">
+      <h3 class="guide-heading">Subscriptions</h3>
+      <div id="guide-subs"></div>
+    </div>
+    <p class="guide-footer">
+      Served through <a href="https://invidious.io" target="_blank" rel="noopener noreferrer">Invidious</a> or
+      <a href="https://docs.piped.video" target="_blank" rel="noopener noreferrer">Piped</a> — volunteer-run YouTube
+      front ends. Subscriptions and history stay in this browser.
+    </p>
+  </nav>
+
+  <main id="app" tabindex="-1"></main>
+
+  <dialog id="settings-dialog" class="dialog" aria-labelledby="settings-title">
+    <form method="dialog" class="dialog-body" id="settings-form">
+      <header class="dialog-header">
+        <h2 id="settings-title">Settings</h2>
+        <button type="submit" class="icon-btn" aria-label="Close" data-icon="close" value="close"></button>
+      </header>
+
+      <label class="field">
+        <span class="field-label">Backend</span>
+        <select id="set-backend">
+          <option value="invidious">Invidious</option>
+          <option value="piped">Piped</option>
+        </select>
+      </label>
+
+      <div class="field">
+        <span class="field-label">Instance</span>
+        <div class="field-row">
+          <select id="set-instance"></select>
+          <span class="status-dot" id="set-status-dot"></span>
+        </div>
+        <p class="field-help" id="set-status-text"></p>
+      </div>
+
+      <div class="field">
+        <span class="field-label">Add a custom instance</span>
+        <div class="field-row">
+          <input type="text" id="set-custom" placeholder="e.g. invidious.example.org" />
+          <button type="button" class="btn" id="set-custom-add">Use</button>
+        </div>
+        <p class="field-help">Your company's or a self-hosted instance is usually the most reliable choice.
+          Live lists: <a href="https://api.invidious.io" target="_blank" rel="noopener noreferrer">Invidious</a>,
+          <a href="https://piped-instances.kavin.rocks" target="_blank" rel="noopener noreferrer">Piped</a>.</p>
+      </div>
+
+      <label class="field">
+        <span class="field-label">Player</span>
+        <select id="set-player">
+          <option value="auto">Built-in player when available (most reliable)</option>
+          <option value="embed">Instance's own player (can do HD)</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span class="field-label">Player host <small>(optional)</small></span>
+        <input type="text" id="set-player-host" placeholder="Defaults to the instance's own player" />
+        <span class="field-help">Where the embedded player is loaded from. Useful for Piped, whose player lives on a different domain than its API.</span>
+      </label>
+
+      <label class="check">
+        <input type="checkbox" id="set-proxy-video" />
+        <span>Stream video through the instance <small>(Invidious <code>local=true</code> — avoids contacting Google's video servers)</small></span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="set-autoplay" />
+        <span>Autoplay videos</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="set-autoplay-next" />
+        <span>Play the next related video when one ends <small>(built-in player)</small></span>
+      </label>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
