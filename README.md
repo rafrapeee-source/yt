@@ -24,9 +24,13 @@ No Invidious or Piped instances are involved.
   Videos and About tabs.
 - **Subscriptions and history**: stored in your browser. Subscribed channels
   appear in the sidebar, and a feed merges their latest uploads.
+- **Light and dark themes**: switch with the sun/moon button in the header,
+  or choose Light, Dark or "Use device setting" in Settings. The choice is
+  remembered, and it is applied before the page paints, so there is no
+  flash of the wrong theme.
 - **Navigation and layout**: Back and Forward restore pages instantly at the
-  same scroll position. Light and dark themes follow your OS, the layout
-  works on phones, and `/` focuses the search box.
+  same scroll position. The layout works on phones, and `/` focuses the
+  search box.
 
 ## How it works
 

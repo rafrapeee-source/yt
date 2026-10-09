@@ -297,6 +297,26 @@ dialog.addEventListener('click', e => {
   if (e.target === dialog) dialog.close(); // backdrop click
 });
 $('#set-autoplay').addEventListener('change', e => updateSettings({ autoplay: e.target.checked }));
+
+// --- Light / dark theme ----------------------------------------------------------
+// public/theme.js applies the theme before first paint; this wires the controls.
+
+const theme = window.findtubeTheme;
+const themeBtn = $('#theme-btn');
+
+function syncThemeControls() {
+  const isDark = theme.current() === 'dark';
+  // The button shows what clicking it switches to.
+  themeBtn.innerHTML = icon(isDark ? 'sun' : 'moon');
+  themeBtn.setAttribute('aria-label', isDark ? 'Switch to light theme' : 'Switch to dark theme');
+  themeBtn.title = themeBtn.getAttribute('aria-label');
+  $('#set-theme').value = theme.preference();
+}
+
+themeBtn.addEventListener('click', () => theme.toggle());
+$('#set-theme').addEventListener('change', e => theme.set(e.target.value));
+document.addEventListener('findtube:theme', syncThemeControls);
+syncThemeControls();
 $('#set-autoplay-next').addEventListener('change', e => updateSettings({ autoplayNext: e.target.checked }));
 
 // --- Boot ----------------------------------------------------------------------

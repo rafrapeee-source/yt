@@ -21,23 +21,23 @@
   color-scheme: dark;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #ffffff;
-    --bg-raised: #ffffff;
-    --bg-hover: rgba(0, 0, 0, 0.05);
-    --bg-active: rgba(0, 0, 0, 0.1);
-    --chip: rgba(0, 0, 0, 0.05);
-    --chip-active-bg: #0f0f0f;
-    --chip-active-fg: #ffffff;
-    --text: #0f0f0f;
-    --text-2: #606060;
-    --border: #e5e5e5;
-    --input-bg: #ffffff;
-    --skeleton: #e8e8e8;
-    --link: #065fd4;
-    color-scheme: light;
-  }
+/* Light theme. Applied via data-theme on <html>, which public/theme.js sets
+   from the saved preference ("system" follows the OS). */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  --bg-active: rgba(0, 0, 0, 0.1);
+  --chip: rgba(0, 0, 0, 0.05);
+  --chip-active-bg: #0f0f0f;
+  --chip-active-fg: #ffffff;
+  --text: #0f0f0f;
+  --text-2: #606060;
+  --border: #e5e5e5;
+  --input-bg: #ffffff;
+  --skeleton: #e8e8e8;
+  --link: #065fd4;
+  color-scheme: light;
 }
 
 /* ---------- Base ---------- */

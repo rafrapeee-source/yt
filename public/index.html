@@ -6,6 +6,8 @@
 <meta name="color-scheme" content="dark light" />
 <title>Findtube</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 20'%3E%3Crect width='28' height='20' rx='6' fill='%23ff0033'/%3E%3Cpath d='M11 6l7 4-7 4z' fill='white'/%3E%3C/svg%3E" />
+<!-- Blocking on purpose: applies the saved light/dark theme before first paint. -->
+<script src="/theme.js"></script>
 <link rel="stylesheet" href="/styles.css" />
 <!-- No bundler: preload the whole module graph in parallel instead of
      discovering it one import level (one network round trip) at a time. -->
@@ -43,6 +45,7 @@
 
     <div class="masthead-end">
       <button type="button" class="icon-btn mobile-search-btn" id="mobile-search-btn" aria-label="Search" data-icon="search"></button>
+      <button type="button" class="icon-btn" id="theme-btn" aria-label="Switch theme"></button>
       <button type="button" class="icon-btn" id="settings-btn" aria-label="Settings" data-icon="settings"></button>
     </div>
   </header>
@@ -72,6 +75,15 @@
         <h2 id="settings-title">Settings</h2>
         <button type="submit" class="icon-btn" aria-label="Close" data-icon="close" value="close"></button>
       </header>
+
+      <label class="field">
+        <span class="field-label">Theme</span>
+        <select id="set-theme">
+          <option value="system">Use device setting</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
 
       <label class="check">
         <input type="checkbox" id="set-autoplay" />
