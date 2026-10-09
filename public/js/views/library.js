@@ -3,8 +3,8 @@
 
 import { api, rememberVideos } from '../api.js';
 import { avatar, videoCard, videoRow, emptyState, skeletons } from '../components.js';
-import { getSubscriptions, getHistory, removeFromHistory, clearHistory, getSettings } from '../store.js';
-import { esc, html, timeAgo } from '../util.js';
+import { getSubscriptions, getHistory, removeFromHistory, clearHistory } from '../store.js';
+import { esc, html, timeAgo, relativeToMs } from '../util.js';
 import { icon } from '../icons.js';
 
 const MAX_CHANNELS = 40;
@@ -67,7 +67,7 @@ export async function subscriptionsView(root, ctx) {
         const items = page.items.filter(v => v.type === 'video').slice(0, PER_CHANNEL);
         if (!items.length) empty++;
         ctx.state.videos.push(...items);
-        ctx.state.videos.sort((a, b) => (b.published || 0) - (a.published || 0));
+        ctx.state.videos.sort((a, b) => relativeToMs(b.publishedText) - relativeToMs(a.publishedText));
       } catch {
         failed++;
       }
@@ -82,17 +82,15 @@ export async function subscriptionsView(root, ctx) {
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, worker));
   if (!ctx.alive) return;
   ctx.state.done = true;
-  if (!ctx.state.videos.length) grid.innerHTML = emptyState('No videos found', 'The instance couldn’t load any of your channels. Try another instance.', 'warning');
+  if (!ctx.state.videos.length) grid.innerHTML = emptyState('No videos found', 'None of your channels could be loaded right now. Try again in a moment.', 'warning');
 }
 
-// Explains gaps in the feed. Piped instances in particular often can't list a
-// channel's uploads, while Invidious usually can.
+// Explains gaps in the feed.
 function summary(failed, empty) {
   const parts = [];
   if (failed) parts.push(`${failed} channel${failed === 1 ? '' : 's'} couldn't be loaded`);
-  if (empty) parts.push(`${empty} returned no videos`);
-  if (!parts.length) return '';
-  return `${parts.join(', ')} on this instance${getSettings().backend === 'piped' ? ' — Invidious instances list channel uploads more reliably' : ''}.`;
+  if (empty) parts.push(`${empty} have no videos`);
+  return parts.length ? parts.join(', ') + '.' : '';
 }
 
 export async function historyView(root, ctx) {

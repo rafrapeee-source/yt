@@ -1,13 +1,12 @@
 // App shell: client-side router, masthead search with suggestions, guide
-// (sidebar), settings dialog and instance health indicator.
+// (sidebar) and settings dialog.
 
 import { $, esc, debounce, toast } from './util.js';
 import { icon, hydrateIcons } from './icons.js';
 import { api } from './api.js';
 import { avatar } from './components.js';
 import {
-  getSettings, currentInstance, updateSettings, setInstance, instanceOptions,
-  getSubscriptions, toggleSubscription, onChange,
+  getSettings, updateSettings, getSubscriptions, toggleSubscription, onChange,
 } from './store.js';
 import { homeView } from './views/home.js';
 import { resultsView } from './views/results.js';
@@ -284,102 +283,24 @@ document.addEventListener('keydown', e => {
   searchInput.select();
 });
 
-// --- Instance status + settings dialog -------------------------------------------
+// --- Settings dialog -----------------------------------------------------------
 
 const dialog = $('#settings-dialog');
-let checkToken = 0;
 
-function setDot(el, status, title) {
-  el.className = `status-dot ${status}`;
-  if (title) el.title = title;
-}
-
-async function checkInstance() {
-  const token = ++checkToken;
-  const instance = currentInstance();
-  const dots = [$('#status-dot'), $('#set-status-dot')];
-  dots.forEach(d => setDot(d, 'checking', `Checking ${instance}…`));
-  $('#set-status-text').textContent = `Checking ${instance}…`;
-  $('#instance-pill-name').textContent = instance;
-
-  try {
-    const data = await fetch(`/api/check-instance?backend=${getSettings().backend}&instance=${encodeURIComponent(instance)}`).then(r => r.json());
-    if (token !== checkToken) return;
-    if (data.error) throw new Error(data.error);
-    const msg = `${instance} is up (${(data.elapsedMs / 1000).toFixed(1)}s).`;
-    dots.forEach(d => setDot(d, 'ok', msg));
-    $('#set-status-text').textContent = msg + ' Individual pages can still fail if YouTube is rate-limiting it.';
-  } catch (err) {
-    if (token !== checkToken) return;
-    const msg = err.message === 'Failed to fetch' ? 'Could not reach the Findtube server.' : err.message;
-    dots.forEach(d => setDot(d, 'down', msg));
-    $('#set-status-text').textContent = msg;
-  }
-}
-
-function fillSettingsForm() {
+$('#settings-btn').addEventListener('click', () => {
   const s = getSettings();
-  $('#set-backend').value = s.backend;
-  $('#set-instance').innerHTML = instanceOptions().map(i => `<option value="${esc(i)}" ${i === currentInstance() ? 'selected' : ''}>${esc(i)}</option>`).join('');
-  $('#set-player-host').value = s.playerHost[s.backend] || '';
-  $('#set-proxy-video').checked = s.proxyVideo;
-  $('#set-proxy-video').closest('.check').hidden = s.backend !== 'invidious';
   $('#set-autoplay').checked = s.autoplay;
   $('#set-autoplay-next').checked = s.autoplayNext;
-  $('#set-player').value = s.player;
-}
-
-function openSettings() {
-  fillSettingsForm();
   dialog.showModal();
-}
-
-$('#settings-btn').addEventListener('click', openSettings);
-$('#instance-pill').addEventListener('click', openSettings);
+});
 dialog.addEventListener('click', e => {
   if (e.target === dialog) dialog.close(); // backdrop click
 });
-
-$('#set-backend').addEventListener('change', e => updateSettings({ backend: e.target.value }));
-$('#set-instance').addEventListener('change', e => setInstance(e.target.value));
-$('#set-custom-add').addEventListener('click', () => {
-  const value = $('#set-custom').value.trim();
-  if (!value) return;
-  setInstance(value);
-  $('#set-custom').value = '';
-});
-$('#set-custom').addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    $('#set-custom-add').click();
-  }
-});
-$('#set-player-host').addEventListener('change', e => {
-  const s = getSettings();
-  updateSettings({ playerHost: { ...s.playerHost, [s.backend]: e.target.value.trim() } });
-});
-$('#set-proxy-video').addEventListener('change', e => updateSettings({ proxyVideo: e.target.checked }));
 $('#set-autoplay').addEventListener('change', e => updateSettings({ autoplay: e.target.checked }));
 $('#set-autoplay-next').addEventListener('change', e => updateSettings({ autoplayNext: e.target.checked }));
-$('#set-player').addEventListener('change', e => updateSettings({ player: e.target.value }));
-
-// Switching backend/instance changes every piece of data on screen, so
-// re-check health and re-render the current page from the new source.
-let lastSource = `${getSettings().backend}|${currentInstance()}`;
-onChange('settings', () => {
-  const source = `${getSettings().backend}|${currentInstance()}`;
-  if (dialog.open) fillSettingsForm();
-  if (source === lastSource) return;
-  lastSource = source;
-  pageStates.clear();
-  checkInstance();
-  toast(`Now using ${currentInstance()}`);
-  render({ restoring: false });
-});
 
 // --- Boot ----------------------------------------------------------------------
 
 hydrateIcons();
 renderGuideSubs();
-checkInstance();
 render({ restoring: true });

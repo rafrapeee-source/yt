@@ -43,10 +43,6 @@
 
     <div class="masthead-end">
       <button type="button" class="icon-btn mobile-search-btn" id="mobile-search-btn" aria-label="Search" data-icon="search"></button>
-      <button type="button" class="instance-pill" id="instance-pill" title="Instance settings">
-        <span class="status-dot" id="status-dot"></span>
-        <span class="instance-pill-name" id="instance-pill-name"></span>
-      </button>
       <button type="button" class="icon-btn" id="settings-btn" aria-label="Settings" data-icon="settings"></button>
     </div>
   </header>
@@ -63,9 +59,8 @@
       <div id="guide-subs"></div>
     </div>
     <p class="guide-footer">
-      Served through <a href="https://invidious.io" target="_blank" rel="noopener noreferrer">Invidious</a> or
-      <a href="https://docs.piped.video" target="_blank" rel="noopener noreferrer">Piped</a> — volunteer-run YouTube
-      front ends. Subscriptions and history stay in this browser.
+      Data comes straight from YouTube; videos play in YouTube's privacy-enhanced
+      (nocookie) player. Subscriptions and history stay in this browser.
     </p>
   </nav>
 
@@ -78,60 +73,15 @@
         <button type="submit" class="icon-btn" aria-label="Close" data-icon="close" value="close"></button>
       </header>
 
-      <label class="field">
-        <span class="field-label">Backend</span>
-        <select id="set-backend">
-          <option value="invidious">Invidious</option>
-          <option value="piped">Piped</option>
-        </select>
-      </label>
-
-      <div class="field">
-        <span class="field-label">Instance</span>
-        <div class="field-row">
-          <select id="set-instance"></select>
-          <span class="status-dot" id="set-status-dot"></span>
-        </div>
-        <p class="field-help" id="set-status-text"></p>
-      </div>
-
-      <div class="field">
-        <span class="field-label">Add a custom instance</span>
-        <div class="field-row">
-          <input type="text" id="set-custom" placeholder="e.g. invidious.example.org" />
-          <button type="button" class="btn" id="set-custom-add">Use</button>
-        </div>
-        <p class="field-help">Your company's or a self-hosted instance is usually the most reliable choice.
-          Live lists: <a href="https://api.invidious.io" target="_blank" rel="noopener noreferrer">Invidious</a>,
-          <a href="https://piped-instances.kavin.rocks" target="_blank" rel="noopener noreferrer">Piped</a>.</p>
-      </div>
-
-      <label class="field">
-        <span class="field-label">Player</span>
-        <select id="set-player">
-          <option value="auto">Built-in player when available (most reliable)</option>
-          <option value="embed">Instance's own player (can do HD)</option>
-        </select>
-      </label>
-
-      <label class="field">
-        <span class="field-label">Player host <small>(optional)</small></span>
-        <input type="text" id="set-player-host" placeholder="Defaults to the instance's own player" />
-        <span class="field-help">Where the embedded player is loaded from. Useful for Piped, whose player lives on a different domain than its API.</span>
-      </label>
-
-      <label class="check">
-        <input type="checkbox" id="set-proxy-video" />
-        <span>Stream video through the instance <small>(Invidious <code>local=true</code> — avoids contacting Google's video servers)</small></span>
-      </label>
       <label class="check">
         <input type="checkbox" id="set-autoplay" />
         <span>Autoplay videos</span>
       </label>
       <label class="check">
         <input type="checkbox" id="set-autoplay-next" />
-        <span>Play the next related video when one ends <small>(built-in player)</small></span>
+        <span>Play the next related video when one ends</span>
       </label>
+      <p class="field-help">Subscriptions, history and settings are stored only in this browser.</p>
     </form>
   </dialog>
 

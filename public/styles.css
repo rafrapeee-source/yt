@@ -140,20 +140,6 @@ a.pill:hover, button.pill:hover { background: var(--bg-active); }
 .suggestions li .icon { width: 20px; height: 20px; color: var(--text-2); }
 .suggestions li:hover, .suggestions li.active { background: var(--bg-hover); }
 
-.instance-pill {
-  display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px;
-  border: 1px solid var(--border); border-radius: 16px; background: transparent;
-  color: var(--text-2); font-size: 12px; max-width: 220px;
-}
-.instance-pill:hover { background: var(--bg-hover); color: var(--text); }
-.instance-pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); flex-shrink: 0; }
-.status-dot.ok { background: #2ba640; }
-.status-dot.down { background: var(--accent); }
-.status-dot.checking { animation: pulse 1.2s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: 0.3; } }
-
 .mobile-search-btn { display: none; }
 
 /* ---------- Guide (sidebar) ---------- */
@@ -335,12 +321,13 @@ a.channel-name:hover { color: var(--text); }
 }
 .player-wrap { grid-area: player; min-width: 0; }
 .player { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius); overflow: hidden; }
-.player iframe, .player video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
-.player-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-.player-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 32px; padding-top: 6px; font-size: 12px; color: var(--text-2); }
-.player-bar .spacer { flex: 1; }
-.player-bar .link-btn { font-size: 12px; color: var(--link); }
-.player-quality select { margin-left: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--input-bg); padding: 2px 4px; font-size: 12px; }
+.player iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+.player-error {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  padding: 24px; background: rgba(0, 0, 0, 0.88); color: #fff; text-align: center;
+}
+.player-error .icon { width: 40px; height: 40px; color: #f2b600; }
+.player-error .btn { background: #fff; color: #0f0f0f; }
 .watch-meta { grid-area: meta; min-width: 0; }
 .watch-related { grid-area: related; min-width: 0; }
 .comments { grid-area: comments; min-width: 0; align-self: start; min-height: 200px; }
@@ -480,7 +467,7 @@ a.channel-name:hover { color: var(--text); }
     padding: 0 0 24px;
   }
   .player { border-radius: 0; }
-  .watch-meta, .watch-related, .comments, .player-bar { padding-left: 16px; padding-right: 16px; }
+  .watch-meta, .watch-related, .comments { padding-left: 16px; padding-right: 16px; }
   .watch-related { margin-top: 24px; }
 }
 
@@ -489,8 +476,6 @@ a.channel-name:hover { color: var(--text); }
   .logo span { display: none; }
   .search { display: none; }
   .mobile-search-btn { display: inline-flex; }
-  .instance-pill-name { display: none; }
-  .instance-pill { padding: 0 10px; height: 32px; }
   body.mobile-search .masthead-start, body.mobile-search .masthead-end { display: none; }
   body.mobile-search .search { display: flex; flex: 1; }
 

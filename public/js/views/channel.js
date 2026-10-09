@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { avatar, subscribeButton, mountFeed, errorPanel, emptyState } from '../components.js';
-import { esc, html, linkify, plural, fullNumber, formatDate, subscribersLabel } from '../util.js';
+import { esc, html, linkify } from '../util.js';
 import { icon } from '../icons.js';
 
 export async function channelView(root, ctx) {
@@ -46,9 +46,7 @@ export async function channelView(root, ctx) {
     return;
   }
 
-  content.innerHTML = `${channel.videos.source === 'search'
-    ? '<p class="feed-note">This instance couldn’t list the channel’s uploads, so these are search results from this channel.</p>'
-    : ''}<div class="grid"></div>`;
+  content.innerHTML = '<div class="grid"></div>';
 
   return mountFeed(ctx, {
     list: content.querySelector('.grid'),
@@ -57,12 +55,12 @@ export async function channelView(root, ctx) {
       continuation
         ? api(`channel/${id}/videos`, { continuation, name: channel.name, avatar: channel.avatar })
         : Promise.resolve(channel.videos),
-    empty: emptyState('No videos', 'This channel has no public videos, or the instance couldn’t load them.', 'subscriptions'),
+    empty: emptyState('No videos', 'This channel hasn’t uploaded any public videos.', 'subscriptions'),
   });
 }
 
 function renderHeader(el, channel, id) {
-  const facts = [subscribersLabel(channel)].filter(Boolean).map(esc);
+  const facts = [channel.handle, channel.subscribersText, channel.videoCountText].filter(Boolean).map(esc);
   el.innerHTML = `
     ${channel.banner ? `<div class="channel-banner"><img src="${esc(channel.banner)}" alt="" decoding="async" /></div>` : ''}
     <header class="channel-header">
@@ -77,11 +75,7 @@ function renderHeader(el, channel, id) {
 }
 
 function renderAbout(el, channel) {
-  const stats = [
-    channel.subscribers != null ? plural(channel.subscribers, 'subscriber') : '',
-    channel.totalViews ? `${fullNumber(channel.totalViews)} views` : '',
-    channel.joined ? `Joined ${formatDate(channel.joined)}` : '',
-  ].filter(Boolean);
+  const stats = [channel.handle, channel.subscribersText, channel.videoCountText].filter(Boolean);
 
   el.innerHTML = `
     <div class="about">

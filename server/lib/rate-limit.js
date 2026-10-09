@@ -1,6 +1,6 @@
 // Fixed-window per-IP rate limiter, kept in memory. Enough to stop one
-// client from burning the free plan's CPU/bandwidth or getting the shared
-// upstream instances to block this server.
+// client from burning the free plan's CPU/bandwidth or getting YouTube to
+// start challenging this server.
 
 function rateLimit({ perMinute, name }) {
   if (!perMinute) return (req, res, next) => next();

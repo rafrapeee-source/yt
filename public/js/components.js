@@ -1,9 +1,9 @@
 // Markup builders and small widgets reused across views. Every value from the
 // API goes through esc() — nothing upstream is inserted as raw HTML.
 
-import { esc, html, formatDuration, viewsLabel, publishedLabel, subscribersLabel, plural, whenNearViewport } from './util.js';
+import { esc, html, formatDuration, viewsLabel, publishedLabel, subscribersLabel, whenNearViewport } from './util.js';
 import { icon } from './icons.js';
-import { isSubscribed, nextInstance, setInstance, getSettings } from './store.js';
+import { isSubscribed } from './store.js';
 import { rememberVideos } from './api.js';
 
 function hue(str = '') {
@@ -89,7 +89,7 @@ export function subscribeButton(channel) {
 }
 
 export function channelRow(channel) {
-  const facts = [channel.handle, subscribersLabel(channel), channel.videoCount != null ? plural(channel.videoCount, 'video') : '']
+  const facts = [channel.handle, subscribersLabel(channel), channel.videoCountText]
     .filter(Boolean)
     .map(esc)
     .join('<span class="dot">•</span>');
@@ -125,9 +125,8 @@ export function spinner() {
   return '<div class="spinner" role="progressbar" aria-label="Loading"></div>';
 }
 
-// A friendly error panel with the actions that usually fix things.
+// A friendly error panel with a retry action.
 export function errorPanel(err, { onRetry, compactLayout = false } = {}) {
-  const next = nextInstance();
   const el = html(`
     <div class="error-panel ${compactLayout ? 'compact' : ''}" role="alert">
       ${icon('warning', 'error-icon')}
@@ -136,16 +135,12 @@ export function errorPanel(err, { onRetry, compactLayout = false } = {}) {
         <p class="error-message">${esc(err?.message || String(err))}</p>
         <div class="error-actions">
           ${onRetry ? `<button type="button" class="btn" data-act="retry">${icon('refresh')}Retry</button>` : ''}
-          ${next ? `<button type="button" class="btn" data-act="next">Try ${esc(next)}</button>` : ''}
-          <button type="button" class="btn ghost" data-act="settings">Settings</button>
         </div>
       </div>
     </div>`);
   el.addEventListener('click', e => {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'retry') onRetry();
-    if (act === 'next') setInstance(next, getSettings().backend);
-    if (act === 'settings') document.getElementById('settings-btn').click();
   });
   return el;
 }
@@ -213,7 +208,7 @@ export function mountFeed(ctx, opts) {
       render(fresh);
       state.continuation = page.continuation || null;
       // Stop when the source is exhausted, or a page brought nothing new
-      // (some instances repeat the last page forever).
+      // (guards against a source that repeats its last page).
       state.done = !state.continuation || (started && !fresh.length);
       footer.innerHTML = '';
       showEmpty();

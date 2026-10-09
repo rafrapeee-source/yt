@@ -54,15 +54,22 @@ export function timeAgo(ms) {
   return 'just now';
 }
 
+// "3 days ago" / "Streamed 2 weeks ago" -> approximate timestamp, for sorting.
+export function relativeToMs(text) {
+  const m = /(d+)s*(second|minute|hour|day|week|month|year)s?s+ago/i.exec(text || '');
+  if (!m) return 0;
+  const unit = { second: 1, minute: 60, hour: 3600, day: 86400, week: 604800, month: 2592000, year: 31536000 }[m[2].toLowerCase()];
+  return Date.now() - Number(m[1]) * unit * 1000;
+}
+
 export function formatDate(ms) {
   return ms ? new Date(ms).toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
 }
 
 export function viewsLabel(video) {
-  if (video.isLive) return video.views ? `${compact(video.views)} watching` : 'Live';
-  if (video.views != null) return plural(video.views, 'view');
-  if (video.viewsText) return /view/i.test(video.viewsText) ? video.viewsText : `${video.viewsText} views`;
-  return '';
+  if (video.views != null) return video.isLive ? `${compact(video.views)} watching` : plural(video.views, 'view');
+  if (video.viewsText) return /view|watching/i.test(video.viewsText) ? video.viewsText : `${video.viewsText} views`;
+  return video.isLive ? 'Live' : '';
 }
 
 export function publishedLabel(video) {

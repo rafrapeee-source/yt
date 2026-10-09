@@ -2,7 +2,7 @@
 // going back/forward between pages is instant and repeated renders of the
 // same data don't refetch.
 
-import { getSettings, currentInstance } from './store.js';
+import { getSettings } from './store.js';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_ENTRIES = 200;
@@ -12,16 +12,13 @@ export class ApiError extends Error {
   constructor(message, data = {}) {
     super(message);
     this.type = data.errorType || 'unknown';
-    this.instance = data.instance;
   }
 }
 
 export function api(path, params = {}) {
   const query = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v != null && v !== '') query.set(k, v);
-  query.set('backend', getSettings().backend);
-  query.set('instance', currentInstance());
-  const url = `/api/${path}?${query}`;
+  const url = `/api/${path}${query.size ? `?${query}` : ''}`;
 
   const hit = cache.get(url);
   if (hit && hit.expires > Date.now()) return hit.promise;
@@ -53,27 +50,22 @@ export function rememberVideos(items) {
 
 export const peekVideo = id => seenVideos.get(id);
 
-// Where the embedded player is loaded from. Invidious serves /embed/ itself;
-// Piped's player lives on its web frontend, whose host usually drops the
-// "api" part of the API host (pipedapi.kavin.rocks -> piped.kavin.rocks).
+// Playback uses YouTube's privacy-enhanced embed, loaded by the visitor's
+// browser. enablejsapi lets the page talk to the player (seek, detect the
+// end of a video) through postMessage — see views/watch.js.
+export const EMBED_ORIGIN = 'https://www.youtube-nocookie.com';
+
 export function playerUrls(videoId, { start = 0 } = {}) {
-  const s = getSettings();
-  const instance = currentInstance();
-  const override = s.playerHost[s.backend]?.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
-  const host =
-    override ||
-    (s.backend === 'piped'
-      ? instance.replace(/^pipedapi\./, 'piped.').replace(/^piped-api\./, 'piped.').replace(/^api\./, '')
-      : instance);
-
-  const params = new URLSearchParams();
-  if (s.autoplay) params.set('autoplay', '1');
-  if (start > 0) params.set('t', String(start));
-  if (s.backend === 'invidious' && s.proxyVideo) params.set('local', 'true');
-
+  const params = new URLSearchParams({
+    enablejsapi: '1',
+    origin: location.origin,
+    rel: '0',
+    playsinline: '1',
+  });
+  if (getSettings().autoplay) params.set('autoplay', '1');
+  if (start > 0) params.set('start', String(start));
   return {
-    host,
-    embed: `https://${host}/embed/${encodeURIComponent(videoId)}?${params}`,
-    watch: `https://${host}/watch?v=${encodeURIComponent(videoId)}${start > 0 ? `&t=${start}` : ''}`,
+    embed: `${EMBED_ORIGIN}/embed/${encodeURIComponent(videoId)}?${params}`,
+    watch: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}${start > 0 ? `&t=${start}` : ''}`,
   };
 }

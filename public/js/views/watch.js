@@ -1,7 +1,7 @@
-import { api, peekVideo, playerUrls, rememberVideos } from '../api.js';
+import { api, peekVideo, playerUrls, rememberVideos, EMBED_ORIGIN } from '../api.js';
 import { avatar, subscribeButton, videoCompact, skeletons, errorPanel, mountFeed, emptyState } from '../components.js';
-import { addToHistory, getSettings, updateSettings } from '../store.js';
-import { esc, html, linkify, compact, fullNumber, formatDate, timeAgo, parseTimestamp, subscribersLabel, viewsLabel, publishedLabel, copyText, toast, whenNearViewport } from '../util.js';
+import { addToHistory, getSettings } from '../store.js';
+import { esc, html, linkify, compact, fullNumber, parseTimestamp, subscribersLabel, viewsLabel, publishedLabel, copyText, toast, whenNearViewport } from '../util.js';
 import { icon } from '../icons.js';
 import { navigate } from '../main.js';
 
@@ -20,10 +20,7 @@ export async function watchView(root, ctx) {
   root.append(
     html(`
     <div class="watch">
-      <div class="player-wrap">
-        <div class="player"></div>
-        <div class="player-bar"></div>
-      </div>
+      <div class="player-wrap"><div class="player"></div></div>
       <div class="watch-meta"></div>
       <aside class="watch-related" aria-label="Related videos"><div class="related-list">${skeletons('compact', 8)}</div></aside>
       <section class="comments" aria-label="Comments"></section>
@@ -33,13 +30,18 @@ export async function watchView(root, ctx) {
   const metaEl = root.querySelector('.watch-meta');
   const relatedEl = root.querySelector('.related-list');
   const commentsEl = root.querySelector('.comments');
-  const player = createPlayer(root.querySelector('.player'), root.querySelector('.player-bar'), id, ctx);
-  const start = parseTimestamp(ctx.params.get('t'));
+  let details = null;
 
-  // With the embed preference the player doesn't need the details, so it
-  // starts loading right away; the built-in player waits for stream URLs.
-  if (getSettings().player === 'embed') player.mountEmbed(start);
-  else player.showLoading();
+  // The player doesn't need the details, so it starts loading right away.
+  const player = createPlayer(root.querySelector('.player'), id, ctx, {
+    onEnded() {
+      const next = details?.related?.[0];
+      if (!next || !getSettings().autoplayNext) return;
+      toast(`Up next: ${next.title}`);
+      navigate(`/watch?v=${next.id}`);
+    },
+  });
+  player.load(parseTimestamp(ctx.params.get('t')));
 
   const onSeek = e => {
     player.seek(e.detail);
@@ -64,14 +66,13 @@ export async function watchView(root, ctx) {
     try {
       const video = await api(`video/${id}`);
       if (!ctx.alive) return;
+      details = video;
       document.title = `${video.title} - Findtube`;
-      player.setDetails(video, start);
       renderMeta(metaEl, video);
-      renderRelated(relatedEl, video.related);
-      addToHistory(video);
+      mountRelated(relatedEl, ctx, video);
+      addToHistory({ ...video, thumbnail: video.thumbnail || preview?.thumbnail });
     } catch (err) {
       if (!ctx.alive) return;
-      player.setDetails(null, start);
       if (preview) {
         renderMeta(metaEl, preview, { partial: true });
         addToHistory(preview);
@@ -89,134 +90,111 @@ export async function watchView(root, ctx) {
 
 // --- Player ----------------------------------------------------------------------
 //
-// Two ways to play:
-//  - built-in: a plain <video> fed with the muxed stream URLs the instance
-//    hands out (usually 360p). Works even when the instance's web pages sit
-//    behind an anti-bot check, and supports precise seeking and autoplay-next.
-//  - embed: the instance's own player in an iframe (can do HD, but breaks if
-//    the instance's site is blocked or challenge-protected).
-// The "auto" setting prefers built-in when streams exist and falls back to
-// the embed if the streams fail to load.
+// YouTube's privacy-enhanced embed (youtube-nocookie.com), loaded by the
+// visitor's browser. With enablejsapi=1 the embed speaks a small postMessage
+// protocol — the same one YouTube's iframe_api script uses — which lets us
+// seek without reloading, notice when a video ends (autoplay next) and catch
+// "embedding disabled" errors, without loading any script from youtube.com.
 
-function createPlayer(el, bar, id, ctx) {
-  let mode = null;
-  let video = null;
-  let details = null;
-  let streams = [];
-  let streamIndex = 0;
+const PLAYER_ENDED = 0;
+const EMBED_BLOCKED_ERRORS = new Set([101, 150, 152, 153]);
 
-  function renderBar() {
-    let quality = '';
-    if (mode === 'native' && streams.length > 1) {
-      quality = `<label class="player-quality">Quality <select>${streams
-        .map((s, i) => `<option value="${i}" ${i === streamIndex ? 'selected' : ''}>${esc(s.quality || s.mime)}</option>`)
-        .join('')}</select></label>`;
-    } else if (mode === 'native') {
-      quality = `<span class="muted">${esc(streams[streamIndex]?.quality || '')}</span>`;
+function createPlayer(el, id, ctx, { onEnded }) {
+  let iframe = null;
+  let ready = false;
+  let handshake = null;
+
+  const send = (func, args = []) => {
+    iframe?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args, id: 1, channel: 'widget' }), EMBED_ORIGIN);
+  };
+
+  function onMessage(e) {
+    if (e.origin !== EMBED_ORIGIN || !iframe || e.source !== iframe.contentWindow) return;
+    let data;
+    try {
+      data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+    } catch {
+      return;
     }
-    const label = mode === 'native' ? 'Built-in player' : `Player from ${esc(playerUrls(id).host)}`;
-    let switchBtn = '';
-    if (mode === 'native') switchBtn = '<button type="button" class="link-btn" data-player="embed">Use the instance’s player (HD)</button>';
-    else if (streams.length) switchBtn = '<button type="button" class="link-btn" data-player="native">Not playing? Use the built-in player</button>';
-
-    bar.innerHTML = `<span class="player-label">${label}</span>${quality}<span class="spacer"></span>${switchBtn}`;
-    bar.querySelector('select')?.addEventListener('change', e => {
-      const t = currentTime();
-      streamIndex = Number(e.target.value);
-      mountNative(t);
-    });
+    if (data.event === 'onReady' || data.event === 'initialDelivery') {
+      if (!ready) {
+        ready = true;
+        clearInterval(handshake);
+        send('addEventListener', ['onStateChange']);
+        send('addEventListener', ['onError']);
+      }
+    } else if (data.event === 'onStateChange' && data.info === PLAYER_ENDED) {
+      onEnded();
+    } else if (data.event === 'infoDelivery' && data.info?.playerState === PLAYER_ENDED) {
+      onEnded();
+    } else if (data.event === 'onError') {
+      showError(data.info);
+    }
   }
-
-  bar.addEventListener('click', e => {
-    const target = e.target.closest('[data-player]')?.dataset.player;
-    if (!target) return;
-    const t = currentTime();
-    updateSettings({ player: target === 'embed' ? 'embed' : 'auto' });
-    if (target === 'embed') mountEmbed(t);
-    else mountNative(t);
+  addEventListener('message', onMessage);
+  ctx.onCleanup(() => {
+    removeEventListener('message', onMessage);
+    clearInterval(handshake);
   });
 
-  function currentTime() {
-    return mode === 'native' && video ? Math.floor(video.currentTime) : 0;
-  }
-
-  function showLoading() {
-    el.innerHTML = '<div class="player-loading"><div class="spinner"></div></div>';
-  }
-
-  function mountEmbed(start = 0) {
-    mode = 'embed';
-    video = null;
+  function load(start = 0) {
+    ready = false;
+    clearInterval(handshake);
     el.innerHTML = `<iframe title="Video player" src="${esc(playerUrls(id, { start }).embed)}"
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-      allowfullscreen referrerpolicy="no-referrer"></iframe>`;
-    renderBar();
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+      allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+    iframe = el.querySelector('iframe');
+    // The embed only starts reporting events after a "listening" message;
+    // repeat it until the player has booted (as YouTube's own script does).
+    iframe.addEventListener('load', () => {
+      let tries = 0;
+      const ping = () => {
+        if (ready || ++tries > 40) return clearInterval(handshake);
+        iframe?.contentWindow?.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), EMBED_ORIGIN);
+      };
+      ping();
+      handshake = setInterval(ping, 250);
+    });
   }
 
-  function mountNative(start = 0) {
-    const stream = streams[streamIndex];
-    if (!stream) return mountEmbed(start);
-    mode = 'native';
-    el.innerHTML = '';
-    video = document.createElement('video');
-    video.controls = true;
-    video.playsInline = true;
-    video.preload = 'auto';
-    video.autoplay = getSettings().autoplay;
-    if (details?.thumbnail) video.poster = details.thumbnail;
-    video.src = stream.url + (start > 0 ? `#t=${start}` : '');
-
-    video.addEventListener('error', () => {
-      if (!ctx.alive || mode !== 'native') return;
-      // Try the next stream before giving up on the built-in player.
-      if (streamIndex < streams.length - 1) {
-        streamIndex++;
-        return mountNative(start);
-      }
-      toast('The built-in player couldn’t load this video, so the instance’s player is used instead.');
-      mountEmbed(start);
-    });
-
-    video.addEventListener('ended', () => {
-      const next = details?.related?.[0];
-      if (!ctx.alive || !next || !getSettings().autoplayNext) return;
-      toast(`Up next: ${next.title}`);
-      navigate(`/watch?v=${next.id}`);
-    });
-
-    el.append(video);
-    if (video.autoplay) video.play().catch(() => { /* autoplay blocked: the user presses play */ });
-    renderBar();
+  function showError(code) {
+    const blocked = EMBED_BLOCKED_ERRORS.has(Number(code));
+    const message = blocked
+      ? 'The uploader doesn’t allow this video to be played on other websites.'
+      : Number(code) === 100
+        ? 'This video is private or has been removed.'
+        : `The player reported an error (code ${esc(code)}).`;
+    const overlay = html(`
+      <div class="player-error">
+        ${icon('warning')}
+        <p>${message}</p>
+        <a class="btn" href="${esc(playerUrls(id).watch)}" target="_blank" rel="noopener noreferrer">${icon('external')}Watch on YouTube</a>
+      </div>`);
+    el.querySelector('.player-error')?.remove();
+    el.append(overlay);
   }
 
   return {
-    showLoading,
-    mountEmbed,
-    setDetails(v, start) {
-      details = v;
-      streams = v?.streams || [];
-      streamIndex = 0;
-      if (mode === 'embed') return renderBar(); // already playing; just offer the switch
-      if (getSettings().player !== 'embed' && streams.length) mountNative(start);
-      else mountEmbed(start);
-    },
+    load,
     seek(seconds) {
-      if (mode === 'native' && video) {
-        video.currentTime = seconds;
-        video.play().catch(() => {});
+      if (ready) {
+        send('seekTo', [seconds, true]);
+        send('playVideo');
       } else {
-        mountEmbed(seconds);
+        load(seconds);
       }
     },
   };
 }
 
+// --- Details --------------------------------------------------------------------
+
 function renderMeta(el, video, { partial = false } = {}) {
-  const { host, watch } = playerUrls(video.id);
+  const watch = playerUrls(video.id).watch;
   const channel = video.channel || {};
   const subs = subscribersLabel(channel);
-  const published = video.published ? `${formatDate(video.published)}` : publishedLabel(video);
-  const views = video.views != null ? `${fullNumber(video.views)} ${video.isLive ? 'watching' : 'views'}` : viewsLabel(video);
+  const views = video.viewCount != null ? `${fullNumber(video.viewCount)} ${video.isLive ? 'watching' : 'views'}` : viewsLabel(video);
+  const date = video.dateText || publishedLabel(video);
   const tags = (video.keywords || []).slice(0, 3).map(k => `#${k.replace(/\s+/g, '')}`);
 
   el.innerHTML = `
@@ -233,18 +211,17 @@ function renderMeta(el, video, { partial = false } = {}) {
       <div class="watch-actions">
         ${video.likes ? `<span class="pill" title="${fullNumber(video.likes)} likes">${icon('like')}${compact(video.likes)}</span>` : ''}
         <button type="button" class="pill" data-act="share">${icon('share')}Share</button>
-        <a class="pill" href="${esc(watch)}" target="_blank" rel="noopener noreferrer" title="Open on ${esc(host)}">${icon('external')}<span class="pill-label">${esc(host)}</span></a>
+        <a class="pill" href="${esc(watch)}" target="_blank" rel="noopener noreferrer" title="Open on YouTube">${icon('external')}<span class="pill-label">YouTube</span></a>
       </div>
     </div>
     <div class="description ${partial ? '' : 'collapsed'}">
       <div class="desc-head">
         ${views ? `<span>${esc(views)}</span>` : ''}
-        ${published ? `<span title="${esc(timeAgo(video.published))}">${esc(published)}</span>` : ''}
+        ${date ? `<span title="${esc(video.publishedText || '')}">${esc(date)}</span>` : ''}
         ${tags.map(t => `<a href="/results?search_query=${encodeURIComponent(t)}">${esc(t)}</a>`).join(' ')}
       </div>
       ${partial ? '<div class="meta-skeleton"><span class="sk-line"></span><span class="sk-line short"></span></div>' : `
         <div class="desc-body">${linkify(video.description, { videoId: video.id }) || '<span class="muted">No description.</span>'}</div>
-        ${video.category ? `<p class="desc-extra">Category: ${esc(video.category)}</p>` : ''}
         <button type="button" class="desc-toggle">...more</button>`}
     </div>`;
 
@@ -259,7 +236,7 @@ function renderMeta(el, video, { partial = false } = {}) {
   const body = box.querySelector('.desc-body');
   // Hide "...more" when everything already fits.
   requestAnimationFrame(() => {
-    if (body.scrollHeight <= body.clientHeight + 2 && !box.querySelector('.desc-extra')) {
+    if (body.scrollHeight <= body.clientHeight + 2) {
       box.classList.remove('collapsed');
       toggle.hidden = true;
     }
@@ -278,13 +255,23 @@ function renderMeta(el, video, { partial = false } = {}) {
   });
 }
 
-function renderRelated(el, items) {
-  rememberVideos(items);
-  el.innerHTML = items.length ? items.map(videoCompact).join('') : '<p class="muted">No related videos.</p>';
+// Related videos: the first batch comes with the details; more load as the
+// sidebar is scrolled, like YouTube's endless "up next" column.
+function mountRelated(el, ctx, video) {
+  el.innerHTML = '';
+  delete ctx.state.related;
+  return mountFeed(ctx, {
+    list: el,
+    layout: 'compact',
+    stateKey: 'related',
+    fetchPage: continuation => (continuation ? api('related', { continuation }) : Promise.resolve({ items: video.related, continuation: video.relatedContinuation })),
+    filter: item => item.type === 'video' && item.id !== video.id,
+    empty: '<p class="muted">No related videos.</p>',
+  });
 }
 
-// When the instance can't provide details (and so no recommendations), fall
-// back to a search for the video's title so the sidebar isn't empty.
+// When the details can't be loaded (and so no recommendations), fall back to
+// a search for the video's title so the sidebar isn't empty.
 async function relatedFallback(el, ctx, id, preview) {
   if (!preview?.title) {
     el.innerHTML = '';
@@ -293,7 +280,9 @@ async function relatedFallback(el, ctx, id, preview) {
   try {
     const data = await api('search', { q: preview.title, type: 'videos' });
     if (!ctx.alive) return;
-    renderRelated(el, data.items.filter(v => v.type === 'video' && v.id !== id));
+    const items = data.items.filter(v => v.type === 'video' && v.id !== id);
+    rememberVideos(items);
+    el.innerHTML = items.map(videoCompact).join('');
   } catch {
     if (ctx.alive) el.innerHTML = '';
   }
@@ -369,7 +358,7 @@ function mountComments(section, ctx, videoId) {
       onRendered: () => measureClamps(list),
       onFirstPage: page => {
         if (page.disabled) countEl.textContent = 'Comments are turned off';
-        else if (page.count != null) countEl.textContent = `${fullNumber(page.count)} Comments`;
+        else if (page.countText) countEl.textContent = `${page.countText} Comments`;
         sortEl.hidden = !page.sortable;
       },
       empty: '<p class="muted">No comments to show.</p>',
@@ -425,4 +414,3 @@ function mountComments(section, ctx, videoId) {
 
   start();
 }
-

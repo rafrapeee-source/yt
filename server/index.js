@@ -1,13 +1,16 @@
-// Findtube server: serves the single-page app and a small JSON API that
-// normalizes Invidious and Piped responses into one shape.
+// Findtube server: serves the single-page app and a small JSON API backed
+// directly by YouTube (see youtube.js). No third-party instances involved.
 //
-// Normalized shapes (see backends/*.js):
-//   Video   { type:'video', id, title, thumbnail, duration, isLive, views, viewsText,
-//             published, publishedText, description, channel:{ id, name, avatar, verified } }
-//   Channel { type:'channel', id, name, avatar, verified, subscribers, videoCount, description }
-//   Page    { items: [...], continuation }   — pass `continuation` back to get the next page.
-//
-// Every /api route takes `backend` (invidious|piped) and `instance` query params.
+// Routes:
+//   GET /api/search?q&type&sort&date&duration&continuation
+//   GET /api/suggestions?q
+//   GET /api/home?seeds=<videoId,videoId,...>
+//   GET /api/video/:id
+//   GET /api/related?continuation
+//   GET /api/comments/:id?sort&continuation
+//   GET /api/channel/:id
+//   GET /api/channel/:id/videos?continuation
+//   GET /health
 
 const path = require('path');
 const express = require('express');
@@ -15,51 +18,44 @@ const compression = require('compression');
 
 const config = require('./config');
 const { rateLimit } = require('./lib/rate-limit');
-
-const { PROXY_URL, PROXY_ENV, UpstreamError } = require('./lib/http');
 const { LruCache, memoize } = require('./lib/cache');
-const { imageRoute, DIRECT_FALLBACK } = require('./lib/images');
-const { FAST_TIMEOUT_MS, SLOW_TIMEOUT_MS } = require('./backends/timeouts');
+const yt = require('./youtube');
 
-const BACKENDS = {
-  invidious: require('./backends/invidious'),
-  piped: require('./backends/piped'),
-};
+// Outbound proxy (only needed on networks like a corporate LAN; not on Render).
+// Node's built-in fetch ignores HTTPS_PROXY unless a proxy dispatcher is set.
+if (['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'].some(k => process.env[k])) {
+  const { EnvHttpProxyAgent, setGlobalDispatcher } = require('undici');
+  setGlobalDispatcher(new EnvHttpProxyAgent());
+}
 
-const DEFAULT_INSTANCE = config.defaultInstance;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
-
 const MINUTE = 60 * 1000;
 const TTL = {
-  check: 1 * MINUTE,
-  trending: 15 * MINUTE,
   search: 10 * MINUTE,
   suggestions: 60 * MINUTE,
+  home: 15 * MINUTE,
   video: 30 * MINUTE,
+  related: 30 * MINUTE,
   comments: 10 * MINUTE,
   channel: 15 * MINUTE,
 };
 
 const cached = memoize(new LruCache({ maxEntries: config.apiCacheEntries }));
+const getVideo = id => cached(`video|${id}`, TTL.video, () => yt.video(id));
 
 const app = express();
 app.disable('x-powered-by');
-// Behind Render's proxy, req.ip comes from X-Forwarded-For (used for rate limiting).
-app.set('trust proxy', true);
+app.set('trust proxy', true); // req.ip from X-Forwarded-For behind Render's proxy (rate limiting)
+app.use(compression()); // gzip JSON/HTML/JS/CSS
 
-// gzip JSON, HTML, JS and CSS (roughly 4-5x smaller); images are skipped
-// automatically since they are already compressed.
-app.use(compression());
-
-// The page only talks to this server and loads the player from whichever
-// instance is selected. No CORS headers: other sites can't use this API.
+// The page loads thumbnails from YouTube's image hosts and the player from
+// youtube-nocookie.com; everything else comes from this server.
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
-  "media-src 'self' https: http: blob:",
-  "frame-src https: http:",
+  "img-src 'self' data: https://i.ytimg.com https://*.ytimg.com https://yt3.ggpht.com https://yt3.googleusercontent.com",
+  'frame-src https://www.youtube-nocookie.com',
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",
@@ -76,90 +72,47 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- Request helpers -------------------------------------------------------
-
-function normalizeBackend(raw) {
-  return raw === 'piped' ? 'piped' : 'invidious';
-}
-
-function normalizeInstance(raw, backend) {
-  if (!raw || typeof raw !== 'string' || !raw.trim()) return DEFAULT_INSTANCE[backend];
-  let url = raw.trim();
-  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-  try {
-    const parsed = new URL(url);
-    return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`;
-  } catch {
-    throw new UpstreamError(`"${raw}" isn't a valid instance address.`, { status: 400, type: 'bad_request' });
-  }
-}
+// --- Helpers -------------------------------------------------------------------
 
 const VIDEO_ID = /^[\w-]{11}$/;
-const CHANNEL_ID = /^[\w-]{2,64}$/;
+const CHANNEL_ID = /^UC[\w-]{22}$/;
+
+function badRequest(message) {
+  return new yt.YouTubeError(message, 400, 'bad_request');
+}
 
 function requireMatch(value, pattern, label) {
-  if (typeof value !== 'string' || !pattern.test(value)) {
-    throw new UpstreamError(`Invalid ${label}.`, { status: 400, type: 'bad_request' });
-  }
+  if (typeof value !== 'string' || !pattern.test(value)) throw badRequest(`Invalid ${label}.`);
   return value;
 }
 
-function str(value, max = 2000) {
-  return typeof value === 'string' ? value.slice(0, max) : '';
-}
+const str = (value, max = 2000) => (typeof value === 'string' ? value.slice(0, max) : '');
 
-// Wraps an API route: resolves backend + instance, runs the handler through
-// the shared cache, and turns failures into JSON errors the UI can show.
-function apiRoute(name, handler) {
+// Runs a handler and turns failures into JSON errors the UI can show.
+function route(handler) {
   return async (req, res) => {
-    let backend, instance;
+    const startedAt = Date.now();
     try {
-      backend = normalizeBackend(req.query.backend);
-      instance = normalizeInstance(req.query.instance, backend);
-      const ctx = { req, backend, instance, impl: BACKENDS[backend] };
-      const { key, run } = handler(ctx);
-      const startedAt = Date.now();
-      const data = await cached(`${backend}|${instance}|${name}|${key}`, TTL[name], run);
+      const data = await handler(req);
       res.set('Cache-Control', 'private, max-age=60');
-      res.json({ ...data, backend, instance, elapsedMs: Date.now() - startedAt });
+      res.json({ ...data, elapsedMs: Date.now() - startedAt });
     } catch (err) {
-      const isKnown = err instanceof UpstreamError;
-      if (!isKnown) console.error(`[${name}]`, err);
-      res.status(isKnown ? err.status : 500).json({
-        error: isKnown ? err.message : `Unexpected error: ${err.message}`,
-        errorType: isKnown ? err.type : 'internal',
-        backend,
-        instance,
-      });
+      const known = err instanceof yt.YouTubeError;
+      if (!known) console.error(`[${req.path}]`, err);
+      res.status(known ? err.status : 500).json({ error: known ? err.message : 'Unexpected server error.', errorType: known ? err.type : 'internal' });
     }
   };
 }
 
-// --- API -------------------------------------------------------------------
+// --- API -------------------------------------------------------------------------
 
-app.use('/api', rateLimit({ perMinute: config.rateLimit.api, name: 'api' }));
-
-app.get(
-  '/api/check-instance',
-  apiRoute('check', ({ impl, instance }) => ({
-    key: '',
-    run: () => impl.check(instance),
-  }))
-);
-
-app.get(
-  '/api/trending',
-  apiRoute('trending', ({ req, impl, instance }) => {
-    const region = /^[A-Z]{2}$/.test(req.query.region) ? req.query.region : 'US';
-    return { key: region, run: () => impl.trending(instance, { region }) };
-  })
-);
+app.use('/api', rateLimit({ perMinute: config.rateLimitApi, name: 'api' }));
 
 app.get(
   '/api/search',
-  apiRoute('search', ({ req, impl, instance }) => {
+  route(req => {
     const q = str(req.query.q, 200).trim();
-    if (!q) throw new UpstreamError('Missing search query.', { status: 400, type: 'bad_request' });
+    if (!q) throw badRequest('Missing search query.');
     const opts = {
       q,
       type: str(req.query.type, 20),
@@ -168,104 +121,129 @@ app.get(
       duration: str(req.query.duration, 20),
       continuation: str(req.query.continuation, 8000),
     };
-    return { key: JSON.stringify(opts), run: () => impl.search(instance, opts) };
+    return cached(`search|${JSON.stringify(opts)}`, TTL.search, () => yt.search(opts));
   })
 );
 
 app.get(
   '/api/suggestions',
-  apiRoute('suggestions', ({ req, impl, instance }) => {
+  route(async req => {
     const q = str(req.query.q, 100).trim().toLowerCase();
-    return { key: q, run: async () => ({ suggestions: q ? await impl.suggestions(instance, q) : [] }) };
+    return { suggestions: q ? await cached(`sugg|${q}`, TTL.suggestions, () => yt.suggestions(q)) : [] };
+  })
+);
+
+// Signed-out YouTube has no home feed or trending page any more, so Home is
+// built like YouTube's own recommendations: videos related to what this
+// visitor watched recently (sent from their local history), falling back to
+// this week's most-viewed videos for first-time visitors.
+app.get(
+  '/api/home',
+  route(async req => {
+    const seeds = str(req.query.seeds, 200).split(',').filter(id => VIDEO_ID.test(id)).slice(0, 3);
+    if (seeds.length) {
+      const pages = await Promise.allSettled(seeds.map(getVideo));
+      const lists = pages.filter(p => p.status === 'fulfilled').map(p => p.value.related);
+      const items = [];
+      const seen = new Set(seeds);
+      for (let i = 0; lists.some(l => i < l.length); i++) {
+        for (const list of lists) {
+          const v = list[i];
+          if (v && !seen.has(v.id)) {
+            seen.add(v.id);
+            items.push(v);
+          }
+        }
+      }
+      if (items.length) return { items, continuation: null, source: 'history' };
+    }
+    const page = await cached('home|popular', TTL.home, () => yt.search({ q: 'trending', type: 'videos', sort: 'view_count', date: 'week' }));
+    return { ...page, source: 'popular' };
   })
 );
 
 app.get(
   '/api/video/:id',
-  apiRoute('video', ({ req, impl, instance }) => {
-    const id = requireMatch(req.params.id, VIDEO_ID, 'video id');
-    return { key: id, run: () => impl.video(instance, id) };
+  route(async req => {
+    const { commentsToken, ...video } = await getVideo(requireMatch(req.params.id, VIDEO_ID, 'video id'));
+    return video;
+  })
+);
+
+app.get(
+  '/api/related',
+  route(req => {
+    const continuation = str(req.query.continuation, 8000);
+    if (!continuation) throw badRequest('Missing continuation.');
+    return cached(`related|${continuation}`, TTL.related, () => yt.relatedPage(continuation));
   })
 );
 
 app.get(
   '/api/comments/:id',
-  apiRoute('comments', ({ req, impl, instance }) => {
+  route(async req => {
     const id = requireMatch(req.params.id, VIDEO_ID, 'video id');
-    const opts = { sort: str(req.query.sort, 10), continuation: str(req.query.continuation, 8000) };
-    return { key: `${id}|${opts.sort}|${opts.continuation}`, run: () => impl.comments(instance, id, opts) };
+    const sort = req.query.sort === 'new' ? 'new' : 'top';
+    const continuation = str(req.query.continuation, 8000);
+    return cached(`comments|${id}|${sort}|${continuation}`, TTL.comments, async () => {
+      const videoToken = continuation ? null : (await getVideo(id)).commentsToken;
+      const { sortTokens, ...page } = await yt.comments(id, { sort, continuation, videoToken });
+      return page;
+    });
   })
 );
 
 app.get(
   '/api/channel/:id',
-  apiRoute('channel', ({ req, impl, instance }) => {
+  route(req => {
     const id = requireMatch(req.params.id, CHANNEL_ID, 'channel id');
-    return { key: id, run: () => impl.channel(instance, id) };
+    return cached(`channel|${id}`, TTL.channel, () => yt.channel(id));
   })
 );
 
 app.get(
   '/api/channel/:id/videos',
-  apiRoute('channel', ({ req, impl, instance }) => {
+  route(req => {
     const id = requireMatch(req.params.id, CHANNEL_ID, 'channel id');
     const continuation = str(req.query.continuation, 8000);
     const channel = { name: str(req.query.name, 200), avatar: str(req.query.avatar, 2000) };
-    return {
-      key: `videos|${id}|${continuation}`,
-      run: () => impl.channelVideos(instance, id, { continuation, channel }),
-    };
+    return cached(`channelVideos|${id}|${continuation}`, TTL.channel, () => yt.channelVideos(id, { continuation, channel }));
   })
 );
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Unknown API route.', errorType: 'not_found' }));
 
-app.get('/img', rateLimit({ perMinute: config.rateLimit.img, name: 'img' }), imageRoute);
-
 // Used by Render's health check (see render.yaml).
 app.get('/health', (req, res) => res.json({ ok: true }));
 
-// --- Frontend ----------------------------------------------------------------
+// --- Frontend ----------------------------------------------------------------------
 
 // No build step means no hashed filenames, so assets are revalidated on every
-// load (a cheap 304 via ETag). A long max-age would let browsers mix old and
-// new modules for a while after each deploy.
+// load (a cheap 304 via ETag) instead of risking stale code after a deploy.
 app.use(express.static(PUBLIC_DIR, { index: false, maxAge: 0, setHeaders: res => res.set('Cache-Control', 'no-cache') }));
 
-// Single-page app: any other GET (e.g. /watch?v=..., /channel/UC...) gets
-// index.html and the client-side router takes it from there.
+// Single-page app: any other GET (/watch?v=…, /channel/UC…) gets index.html.
 app.use((req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   res.set('Cache-Control', 'no-cache');
   res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
-// --- Start / stop --------------------------------------------------------------
-
-const maskCredentials = url => url.replace(/\/\/[^@/]+@/, '//***@');
+// --- Start / stop --------------------------------------------------------------------
 
 const server = app.listen(config.port, () => {
   console.log(`Findtube listening on port ${config.port}${config.isHosted ? ' (hosted mode)' : ` — http://localhost:${config.port}`}`);
-  console.log(`Default instances: ${DEFAULT_INSTANCE.invidious} (Invidious), ${DEFAULT_INSTANCE.piped} (Piped)`);
-  console.log(`Timeouts — fast: ${FAST_TIMEOUT_MS}ms, slow: ${SLOW_TIMEOUT_MS}ms`);
-  console.log(
-    `Image cache: ${config.imageCacheMb} MB, YouTube CDN fallback ${DIRECT_FALLBACK ? 'on' : 'off'}; ` +
-      `private instance addresses ${config.allowPrivateHosts ? 'allowed' : 'blocked'}; ` +
-      `rate limits (req/min/IP): api ${config.rateLimit.api || 'off'}, img ${config.rateLimit.img || 'off'}`
-  );
-  console.log(PROXY_URL ? `Outbound proxy: ${maskCredentials(PROXY_URL)} (from ${PROXY_ENV})` : 'Outbound proxy: none');
+  console.log(`YouTube API host: ${config.youtubeApiHost}; rate limit: ${config.rateLimitApi || 'off'} req/min/IP`);
+  yt.warmUp();
 });
 
-// Keep idle connections open longer than the platform's load balancer does,
-// so it never reuses a socket Node has just closed (which shows up as 502s).
+// Outlive the platform load balancer's idle timeout to avoid sporadic 502s.
 server.keepAliveTimeout = 120 * 1000;
 server.headersTimeout = 125 * 1000;
 
-// Render sends SIGTERM before replacing or stopping the instance; finish
-// in-flight requests, then exit.
+// Render sends SIGTERM before replacing the instance: finish requests, then exit.
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
-    console.log(`${signal} received, shutting down`);
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 10 * 1000).unref();
   });
